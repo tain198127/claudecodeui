@@ -46,6 +46,12 @@ type UseChatComposerStateArgs = {
    */
   currentProviderModel: string;
   currentProviderEffort: string;
+  /**
+   * Upstream endpoint every send carries: the open session's binding, or null
+   * for "follow the default". Recorded server-side on send so the choice
+   * survives with the same timing as the model and effort.
+   */
+  currentProviderUpstreamId: string | null;
   isLoading: boolean;
   processingSessions?: SessionActivityMap;
   canAbortSession: boolean;
@@ -177,6 +183,7 @@ export function useChatComposerState({
   resolvePermissionModeForProvider,
   currentProviderModel,
   currentProviderEffort,
+  currentProviderUpstreamId,
   isLoading,
   processingSessions,
   canAbortSession,
@@ -641,6 +648,11 @@ export function useChatComposerState({
     return {
       model: currentProviderModel,
       effort: currentProviderEffort,
+      // Sent alongside the model so the server records it with the same write
+      // timing — a chat composed before its session row existed still lands its
+      // endpoint choice on the first send. `null` is a real value meaning
+      // "follow the default".
+      upstreamId: currentProviderUpstreamId,
       permissionMode: resolvePermissionModeForProvider(provider, permissionMode),
       toolsSettings,
       skipPermissions: toolsSettings?.skipPermissions || false,
@@ -649,6 +661,7 @@ export function useChatComposerState({
   }, [
     currentProviderEffort,
     currentProviderModel,
+    currentProviderUpstreamId,
     permissionMode,
     provider,
     resolvePermissionModeForProvider,

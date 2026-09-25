@@ -278,6 +278,18 @@ function mapCliOptionsToSDK(options = {}) {
 
   sdkOptions.model = options.model || CLAUDE_PREDEFINED_MODELS.DEFAULT;
 
+  // A configured upstream replaces the endpoint wholesale, so its base URL and
+  // token win over whatever the host environment carried. ANTHROPIC_MODEL is
+  // pinned last to the model this run resolved: the endpoint may serve entirely
+  // different model names, and leaving the environment's value in place would
+  // let the CLI request one this upstream has never heard of.
+  //
+  // With no upstream resolved this block is skipped entirely and `env` stays
+  // byte-for-byte the environment-plus-ceiling object built above.
+  if (options.upstreamEnv) {
+    Object.assign(sdkOptions.env, options.upstreamEnv, { ANTHROPIC_MODEL: sdkOptions.model });
+  }
+
   applyClaudeEffort(sdkOptions, resolveClaudeEffort(
     sdkOptions.model,
     effort,
@@ -940,11 +952,24 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
       console.warn('[Claude SDK] Unable to load provider models for effort validation:', error);
     }
 
+    // Which endpoint this run talks to. Resolved here rather than inside
+    // `mapCliOptionsToSDK` because it needs the session binding, and kept out of
+    // the runtime adapter entirely so this file never imports the database.
+    // A failure to resolve must not fail the turn: the run then keeps the host
+    // environment, which is what every install without upstreams uses.
+    let upstreamEnv = null;
+    try {
+      upstreamEnv = await context.resolveUpstreamEnv?.(sessionId);
+    } catch (error) {
+      console.warn('[Claude SDK] Unable to resolve the configured upstream:', error);
+    }
+
     const sdkOptions = mapCliOptionsToSDK({
       ...options,
       providerSessionId,
       model: resolvedModel || options.model,
       effortModels,
+      upstreamEnv,
     });
 
     const mcpServers = await loadMcpConfig(options.cwd);

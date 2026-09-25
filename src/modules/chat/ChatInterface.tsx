@@ -124,6 +124,9 @@ function ChatInterface({
     resolvePermissionModeForProvider,
     supportsMessageEditing,
     supportsSessionForking,
+    currentProviderUpstreams,
+    currentProviderUpstreamId,
+    selectProviderUpstream,
   } = useChatProviderState({
     selectedSession,
     selectedProject,
@@ -245,6 +248,7 @@ function ChatInterface({
     cyclePermissionMode,
     currentProviderModel,
     currentProviderEffort,
+    currentProviderUpstreamId,
     isLoading: isProcessing,
     processingSessions,
     canAbortSession,
@@ -422,6 +426,15 @@ function ChatInterface({
     }
   }, [currentSessionId, provider, selectProviderEffort, selectedSession?.id]);
 
+  // Recorded against the session, so reopening it restores this endpoint.
+  const handleSelectComposerUpstream = useCallback(async (upstreamId: string | null) => {
+    try {
+      await selectProviderUpstream(upstreamId, currentSessionId || selectedSession?.id || null);
+    } catch (error) {
+      console.error('Error changing the active session upstream:', error);
+    }
+  }, [currentSessionId, selectProviderUpstream, selectedSession?.id]);
+
   // Mirrors ChatComposer's own visibility check so the message pane can
   // reserve enough bottom space to keep the floating status tab from
   // overlapping the last message.
@@ -549,6 +562,9 @@ function ChatInterface({
           availableModelOptions={currentProviderModelOptions}
           onSelectModel={handleSelectComposerModel}
           modelsLoading={providerModelsLoading}
+          upstreams={currentProviderUpstreams}
+          upstreamId={currentProviderUpstreamId}
+          onSelectUpstream={handleSelectComposerUpstream}
           tokenBudget={tokenBudget}
           onShowTokenUsage={showCostModal}
           isEditingSentMessage={Boolean(editingAnchorId)}

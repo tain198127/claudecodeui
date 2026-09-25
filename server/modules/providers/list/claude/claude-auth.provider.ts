@@ -4,15 +4,28 @@ import path from 'node:path';
 
 import spawn from 'cross-spawn';
 
+// upstreamResolver: used to report a configured endpoint as the install's
+// credential source, matching what the runtime actually authenticates with.
+import { upstreamResolver } from '@/modules/upstreams/index.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import type { IProviderAuth } from '@/shared/interfaces.js';
 import type { ProviderAuthStatus } from '@/shared/types.js';
 import { readObjectRecord, readOptionalString } from '@/shared/utils.js';
 
+/** Credential stores Claude Code consults, in the order `checkCredentials` tries them. */
+type ClaudeCredentialsSource = 'upstream' | 'environment' | 'settings' | 'credentials_file';
+
 type ClaudeCredentialsStatus = {
   authenticated: boolean;
   email: string | null;
   method: string | null;
+  /**
+   * Which credential store answered. `upstream` means a configured endpoint
+   * supplied both the URL and the token, which is what Settings reports so an
+   * operator can tell "signed in with Claude" from "pointed at a gateway".
+   * Absent when nothing authenticated the install.
+   */
+  source?: ClaudeCredentialsSource;
   error?: string;
 };
 
@@ -61,6 +74,7 @@ export class ClaudeProviderAuth implements IProviderAuth {
       authenticated: credentials.authenticated,
       email: credentials.authenticated ? credentials.email || 'Authenticated' : credentials.email,
       method: credentials.method,
+      credentialSource: credentials.source,
       error: credentials.authenticated ? undefined : credentials.error || 'Not authenticated',
     };
   }
@@ -82,32 +96,78 @@ export class ClaudeProviderAuth implements IProviderAuth {
   /**
    * Checks Claude credentials in the same priority order used by Claude Code.
    */
+  /**
+   * Reads the install's default upstream, treating an unreadable store as "none".
+   *
+   * This is a status probe: it is polled from Settings and its whole contract is
+   * to report what it can find. A store it only consults in order to *describe*
+   * the credential state must not be able to fail the probe, so a read error
+   * degrades to the environment checks below — which is exactly what an install
+   * with no upstreams does anyway.
+   */
+  private readDefaultUpstream() {
+    try {
+      return upstreamResolver.resolveDefault();
+    } catch {
+      return null;
+    }
+  }
+
   private async checkCredentials(): Promise<ClaudeCredentialsStatus> {
     const missingCredentialsError = 'Claude CLI is not authenticated. Run claude /login or configure ANTHROPIC_API_KEY.';
 
+    // Checked before the environment because the runtime injects an upstream's
+    // base URL and token *over* the host environment, so a configured endpoint
+    // is what a run actually authenticates with. An upstream whose stored token
+    // cannot be decrypted is not usable and falls through to the checks below.
+    const upstream = this.readDefaultUpstream();
+    if (upstream?.authToken) {
+      return {
+        authenticated: true,
+        email: upstream.upstream.name,
+        method: 'api_key',
+        source: 'upstream',
+      };
+    }
+
     if (process.env.ANTHROPIC_AUTH_TOKEN?.trim()) {
-      return { authenticated: true, email: 'Auth Token', method: 'api_key' };
+      return { authenticated: true, email: 'Auth Token', method: 'api_key', source: 'environment' };
     }
 
     if (process.env.ANTHROPIC_API_KEY?.trim()) {
-      return { authenticated: true, email: 'API Key Auth', method: 'api_key' };
+      return { authenticated: true, email: 'API Key Auth', method: 'api_key', source: 'environment' };
     }
 
     const settingsEnv = await this.loadSettingsEnv();
     if (readOptionalString(settingsEnv.ANTHROPIC_API_KEY)) {
-      return { authenticated: true, email: 'API Key Auth', method: 'api_key' };
+      return { authenticated: true, email: 'API Key Auth', method: 'api_key', source: 'settings' };
     }
 
     if (readOptionalString(settingsEnv.ANTHROPIC_AUTH_TOKEN)) {
-      return { authenticated: true, email: 'Configured via settings.json', method: 'api_key' };
+      return {
+        authenticated: true,
+        email: 'Configured via settings.json',
+        method: 'api_key',
+        source: 'settings',
+      };
     }
 
     if (process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) {
-      return { authenticated: true, email: 'OAuth Token (long-lived)', method: 'environment' };
+      return {
+        authenticated: true,
+        email: 'OAuth Token (long-lived)',
+        method: 'environment',
+        source: 'environment',
+      };
     }
 
     if (readOptionalString(settingsEnv.CLAUDE_CODE_OAUTH_TOKEN)) {
-      return { authenticated: true, email: 'OAuth Token (long-lived)', method: 'environment' };
+      return {
+        authenticated: true,
+        email: 'OAuth Token (long-lived)',
+        method: 'environment',
+        source: 'settings',
+      };
     }
 
     try {
@@ -125,6 +185,7 @@ export class ClaudeProviderAuth implements IProviderAuth {
             authenticated: true,
             email,
             method: 'credentials_file',
+            source: 'credentials_file',
           };
         }
 
@@ -143,6 +204,7 @@ export class ClaudeProviderAuth implements IProviderAuth {
             authenticated: true,
             email,
             method: 'credentials_file',
+            source: 'credentials_file',
           };
         }
 

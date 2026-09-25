@@ -8,7 +8,8 @@ import type { PendingPermissionRequest, PermissionMode,
   CustomProviderModelInput,
   ProviderModelActions,
   ProviderModelOption,
-  ProviderModelsDefinition } from '@/shared/types';
+  ProviderModelsDefinition,
+  Upstream } from '@/shared/types';
 import { DEFAULT_EFFORT_VALUE } from '@/shared/constants';
 import { readSelectedProvider, writeSelectedProvider } from '@/shared/selectedProvider';
 
@@ -110,6 +111,22 @@ type SessionSelectionApiResponse = {
      * which the composer replaces with the user's per-provider selection.
      */
     source?: 'session' | 'provider' | 'default';
+  };
+};
+
+type UpstreamsApiResponse = {
+  success?: boolean;
+  data?: {
+    upstreams?: Upstream[];
+  };
+};
+
+type SessionUpstreamApiResponse = {
+  success?: boolean;
+  data?: {
+    provider?: LLMProvider;
+    sessionId?: string | null;
+    upstreamId?: string | null;
   };
 };
 
@@ -482,6 +499,19 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       : getDefaultPermissionModeForProvider(targetProvider);
   }, [getDefaultPermissionModeForProvider, getPermissionModesForProvider]);
 
+  /**
+   * Endpoints configured in Settings, as offered by the composer's upstream
+   * selector. Held here rather than fetched by the selector so the list is
+   * loaded once per session switch instead of on every menu open.
+   */
+  const [providerUpstreams, setProviderUpstreams] = useState<Upstream[]>([]);
+  /**
+   * Which upstream the open session chats through; null means it follows the
+   * install default. Kept per session, mirroring the model selection, so
+   * switching sessions shows what each session actually runs against.
+   */
+  const [sessionUpstreamId, setSessionUpstreamId] = useState<string | null>(null);
+
   /** Model and reasoning effort recorded for the open session by the backend. */
   const [sessionSelection, setSessionSelection] = useState<SessionProviderSelection | null>(null);
   const selectedSessionId = selectedSession?.id?.trim() || null;
@@ -555,6 +585,79 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       cancelled = true;
     };
   }, [selectedSessionId, selectedSessionProvider]);
+
+  // The configured endpoints and the open session's binding are refreshed
+  // together: an upstream added in Settings while a chat is open should appear
+  // in the selector as soon as the user comes back to it.
+  useEffect(() => {
+    let cancelled = false;
+    const targetProvider = selectedSessionProvider;
+
+    const loadUpstreams = async () => {
+      try {
+        const response = await api.upstreams.list();
+        const body = (await response.json()) as UpstreamsApiResponse;
+        if (cancelled || !body.success) {
+          return;
+        }
+        setProviderUpstreams(body.data?.upstreams ?? []);
+      } catch (error) {
+        console.error('Error loading upstream endpoints:', error);
+      }
+    };
+
+    const loadSessionUpstream = async () => {
+      if (!selectedSessionId) {
+        setSessionUpstreamId(null);
+        return;
+      }
+
+      try {
+        const response = await api.upstreams.getSessionUpstream(targetProvider, selectedSessionId);
+        const body = (await response.json()) as SessionUpstreamApiResponse;
+        if (cancelled || !body.success) {
+          return;
+        }
+        setSessionUpstreamId(body.data?.upstreamId ?? null);
+      } catch (error) {
+        console.error('Error loading the session upstream binding:', error);
+      }
+    };
+
+    void loadUpstreams();
+    void loadSessionUpstream();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSessionId, selectedSessionProvider]);
+
+  /**
+   * Points the open session at an upstream, or back at the default when null.
+   *
+   * A brand-new chat has no session row yet, so the choice is held locally and
+   * sent with the first message instead — the same arrangement the model
+   * selection uses.
+   */
+  const selectProviderUpstream = useCallback(async (
+    upstreamId: string | null,
+    sessionId?: string | null,
+  ) => {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      setSessionUpstreamId(upstreamId);
+      return { scope: 'default' as const, upstreamId };
+    }
+
+    const response = await api.upstreams.setSessionUpstream(provider, normalizedSessionId, upstreamId);
+    const body = (await response.json()) as SessionUpstreamApiResponse;
+    if (!response.ok || !body.success) {
+      throw new Error('Unable to change the upstream endpoint for this session.');
+    }
+
+    setSessionUpstreamId(body.data?.upstreamId ?? upstreamId);
+    return { scope: 'session' as const, upstreamId: body.data?.upstreamId ?? upstreamId };
+  }, [provider]);
 
   /**
    * Applies a model choice.
@@ -690,6 +793,13 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
   // The open session's model wins over the per-provider default, so switching
   // sessions shows (and sends) what each session actually runs with.
   const currentProviderModel = sessionModel ?? providerModels[provider];
+  // Upstream endpoints speak the Anthropic protocol, so only Claude offers the
+  // selector; `sessionUpstreamId` is already per-session.
+  const currentProviderUpstreamId = provider === 'claude' ? sessionUpstreamId : null;
+  const currentProviderUpstreams = useMemo(
+    () => (provider === 'claude' ? providerUpstreams : []),
+    [provider, providerUpstreams],
+  );
   const currentProviderEffortOptions = useMemo(() => {
     return getEffortOptionsForModel(provider, currentProviderModel);
   }, [currentProviderModel, getEffortOptionsForModel, provider]);
@@ -830,5 +940,8 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     resolvePermissionModeForProvider,
     supportsMessageEditing,
     supportsSessionForking,
+    currentProviderUpstreams,
+    currentProviderUpstreamId,
+    selectProviderUpstream,
   };
 }

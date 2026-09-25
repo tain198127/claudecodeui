@@ -1333,7 +1333,7 @@ export type AgentContext = {
 };
 
 /** Identifier of a top-level section in the settings dialog; use it whenever a tab is stored, compared or requested so deep links, the sidebar and the command palette all agree on the same set of names. */
-export type SettingsMainTab = 'agents' | 'appearance' | 'git' | 'api' | 'voice' | 'tasks' | 'browser' | 'notifications' | 'plugins' | 'about';
+export type SettingsMainTab = 'agents' | 'appearance' | 'git' | 'api' | 'upstreams' | 'voice' | 'tasks' | 'browser' | 'notifications' | 'plugins' | 'about';
 
 /** The coding-agent CLI a settings screen is configuring, aliasing LLMProvider so agent-scoped settings read as being about an agent rather than a chat model. */
 export type AgentProvider = LLMProvider;
@@ -1768,3 +1768,61 @@ type TaskStatus =
 
 /** A TaskMaster task's priority; high, medium and low are the known values and the string fallback tolerates anything else TaskMaster emits. */
 type TaskPriority = 'high' | 'medium' | 'low' | string;
+
+// ---------------------------
+//----------------- UPSTREAM ENDPOINTS ------------
+/**
+ * One model an upstream endpoint serves, as the settings form edits it.
+ *
+ * `id` is what gets sent to the endpoint as the model name; `label` is only ever
+ * shown in the picker.
+ */
+export type UpstreamModel = {
+  id: string;
+  label: string;
+  description?: string;
+};
+
+/**
+ * A configured Anthropic-compatible endpoint as the API returns it.
+ *
+ * The auth token is never included — the server reports `hasToken` so the UI can
+ * tell a fully configured endpoint from one still waiting for its secret, and
+ * nothing more.
+ */
+export type Upstream = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  models: UpstreamModel[];
+  extraEnv: Record<string, string>;
+  isDefault: boolean;
+  hasToken: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+/** Fields the settings form submits when creating or editing an upstream. */
+export type UpstreamPayload = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  /** Empty on edit means "keep the stored secret"; ignored on create. */
+  authToken: string;
+  models: UpstreamModel[];
+};
+
+/** Outcome of probing an upstream's `/v1/models` endpoint; never carries the token. */
+export type UpstreamConnectionTest = {
+  ok: boolean;
+  status?: number;
+  modelIds?: string[];
+  error?: string;
+};
+
+/** Which upstream one session chats through; `upstreamId: null` follows the default. */
+export type SessionUpstreamBinding = {
+  provider: string;
+  sessionId: string;
+  upstreamId: string | null;
+};

@@ -11,6 +11,7 @@ import {
   SUPERSEDED_PROVIDER_SESSIONS_TABLE_SCHEMA_SQL,
   SCHEDULED_MESSAGES_TABLE_SCHEMA_SQL,
   SESSIONS_TABLE_SCHEMA_SQL,
+  UPSTREAMS_TABLE_SCHEMA_SQL,
   USER_PREFERENCES_TABLE_SCHEMA_SQL,
   USER_NOTIFICATION_PREFERENCES_TABLE_SCHEMA_SQL,
   VAPID_KEYS_TABLE_SCHEMA_SQL,
@@ -457,6 +458,27 @@ const addSessionEffortColumn = (db: Database): void => {
   addColumnToTableIfNotExists(db, 'sessions', columnNames, 'effort', 'TEXT');
 };
 
+/**
+ * Creates the `upstreams` table and adds the session column binding a session
+ * to one of them.
+ *
+ * `upstream_id` is deliberately left NULL on every pre-existing row, which is
+ * what keeps the feature inert on an upgraded install: a NULL binding follows
+ * the default upstream, and with no upstream configured at all the runtime
+ * keeps the endpoint it already had.
+ *
+ * Runs after the sessions rebuild above, which rewrites that table from a
+ * column list that predates this one.
+ */
+const createUpstreamsTable = (db: Database): void => {
+  db.exec(UPSTREAMS_TABLE_SCHEMA_SQL);
+
+  const sessionsTableInfo = getTableInfo(db, 'sessions');
+  const columnNames = sessionsTableInfo.map((column) => column.name);
+
+  addColumnToTableIfNotExists(db, 'sessions', columnNames, 'upstream_id', 'TEXT');
+};
+
 const ensureProjectsForSessionPaths = (db: Database): void => {
   if (!tableExists(db, 'sessions')) {
     return;
@@ -519,6 +541,7 @@ export const runMigrations = (db: Database) => {
     addSessionModelColumn(db);
     addSessionEffortColumn(db);
     addForkedFromSessionIdColumn(db);
+    createUpstreamsTable(db);
     ensureProjectsForSessionPaths(db);
     db.exec(SCHEDULED_MESSAGES_TABLE_SCHEMA_SQL);
 

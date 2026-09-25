@@ -54,6 +54,7 @@ const renderComposer = (selectedSession: ProjectSession | null) => renderHook(
     resolvePermissionModeForProvider: () => 'default' as PermissionMode,
     currentProviderModel: 'test-model',
     currentProviderEffort: 'medium',
+    currentProviderUpstreamId: null,
     isLoading: false,
     canAbortSession: false,
     tokenBudget: null,

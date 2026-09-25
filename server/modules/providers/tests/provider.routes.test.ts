@@ -11,6 +11,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { closeConnection, initializeDatabase, sessionsDb } from '@/modules/database/index.js';
 import providerRouter from '@/modules/providers/provider.routes.js';
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
+import { upstreamsService } from '@/modules/upstreams/index.js';
 import type { IProvider } from '@/shared/interfaces.js';
 import type { BackgroundTaskSummary, WorkflowAgentActivity } from '@/shared/types.js';
 import { AppError } from '@/shared/utils.js';
@@ -372,5 +373,71 @@ test('the workflow agent route reads an agent\'s timeline and status from its ru
     const missing = await missingResponse.json() as { error: { code: string } };
     assert.equal(missingResponse.status, 404);
     assert.equal(missing.error.code, 'WORKFLOW_AGENT_NOT_FOUND');
+  });
+});
+
+test('the session upstream binding routes round trip', async () => {
+  await withProviderServer(async (baseUrl, workspacePath) => {
+    // The binding routes address the Upstreams module's rows through its public
+    // barrel, which is the only way one module may reach another's records.
+    upstreamsService.create({
+      id: 'deepseek',
+      name: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com/anthropic',
+      authToken: 'sk-test',
+      models: [{ id: 'deepseek-chat', label: 'DeepSeek Chat' }],
+    });
+
+    const created = await fetch(`${baseUrl}/api/providers/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'claude', projectPath: workspacePath }),
+    });
+    const sessionId = ((await created.json()) as { data: { sessionId: string } }).data.sessionId;
+    const bindingUrl = `${baseUrl}/api/providers/claude/sessions/${sessionId}/upstream`;
+
+    // A session that has never chosen reports the null that means "follow the
+    // default" rather than the null that means "no such session".
+    const initial = await fetch(bindingUrl);
+    assert.equal(initial.status, 200);
+    assert.deepEqual(await initial.json(), {
+      success: true,
+      data: { provider: 'claude', sessionId, upstreamId: null },
+    });
+
+    const putBinding = (upstreamId: unknown) => fetch(bindingUrl, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ upstreamId }),
+    });
+
+    assert.deepEqual(await (await putBinding('deepseek')).json(), {
+      success: true,
+      data: { provider: 'claude', sessionId, upstreamId: 'deepseek' },
+    });
+    assert.deepEqual(
+      ((await (await fetch(bindingUrl)).json()) as { data: { upstreamId: string | null } }).data.upstreamId,
+      'deepseek',
+    );
+
+    assert.deepEqual(await (await putBinding(null)).json(), {
+      success: true,
+      data: { provider: 'claude', sessionId, upstreamId: null },
+    });
+
+    // An unknown upstream is rejected rather than stored, and a payload that is
+    // neither a string nor null is a client bug rather than a value to coerce.
+    const unknown = await putBinding('missing');
+    assert.equal(unknown.status, 404);
+    assert.equal((await unknown.json() as { error: { code: string } }).error.code, 'UPSTREAM_NOT_FOUND');
+
+    const invalid = await putBinding(42);
+    assert.equal(invalid.status, 400);
+    assert.equal((await invalid.json() as { error: { code: string } }).error.code, 'INVALID_UPSTREAM_ID');
+
+    const missingSession = await fetch(
+      `${baseUrl}/api/providers/claude/sessions/no-such-session/upstream`,
+    );
+    assert.equal(missingSession.status, 404);
   });
 });
