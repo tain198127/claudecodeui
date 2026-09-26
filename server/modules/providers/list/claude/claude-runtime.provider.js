@@ -278,16 +278,40 @@ function mapCliOptionsToSDK(options = {}) {
 
   sdkOptions.model = options.model || CLAUDE_PREDEFINED_MODELS.DEFAULT;
 
-  // A configured upstream replaces the endpoint wholesale, so its base URL and
-  // token win over whatever the host environment carried. ANTHROPIC_MODEL is
-  // pinned last to the model this run resolved: the endpoint may serve entirely
-  // different model names, and leaving the environment's value in place would
-  // let the CLI request one this upstream has never heard of.
+  // A configured upstream replaces the endpoint wholesale. Measured precedence
+  // on the CLI is `--settings` > user settings.json > process environment, so
+  // the overlay has to go through `settings.env`: written only into `env` it is
+  // overridden by whatever `~/.claude/settings.json` carries, and the session
+  // silently talks to the host's endpoint instead of the selected one.
+  //
+  // That precedence is a *per-key* merge, which is what makes the two pins below
+  // necessary rather than optional. Any ANTHROPIC_* key left unset survives from
+  // the host settings and points the CLI at a model the new endpoint has never
+  // heard of — ANTHROPIC_MODEL for the conversation, and the haiku alias for the
+  // background work (title generation, compaction) that runs on that tier.
+  //
+  // `env` is still written as well, so a CLI spawning its own children hands
+  // them the endpoint it was given.
+  //
+  // This block must stay after `sdkOptions.model` is assigned (both pins read
+  // it) and before `applyClaudeEffort` (which spreads `settings`).
   //
   // With no upstream resolved this block is skipped entirely and `env` stays
   // byte-for-byte the environment-plus-ceiling object built above.
   if (options.upstreamEnv) {
-    Object.assign(sdkOptions.env, options.upstreamEnv, { ANTHROPIC_MODEL: sdkOptions.model });
+    const upstreamEnv = {
+      ...options.upstreamEnv,
+      ANTHROPIC_MODEL: sdkOptions.model,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL:
+        options.upstreamEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL || sdkOptions.model,
+    };
+
+    Object.assign(sdkOptions.env, upstreamEnv);
+
+    sdkOptions.settings = {
+      ...(sdkOptions.settings || {}),
+      env: { ...(sdkOptions.settings?.env || {}), ...upstreamEnv },
+    };
   }
 
   applyClaudeEffort(sdkOptions, resolveClaudeEffort(
@@ -1505,5 +1529,6 @@ export {
   getPendingApprovalsForSession,
   reconnectSessionWriter,
   extractTokenBudget,
-  extractCumulativeTokenBudget
+  extractCumulativeTokenBudget,
+  mapCliOptionsToSDK
 };
