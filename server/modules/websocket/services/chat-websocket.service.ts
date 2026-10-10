@@ -4,6 +4,9 @@ import type { WebSocket } from 'ws';
 
 import { sessionsDb } from '@/modules/database/index.js';
 import { providerModelsService, sessionsService } from '@/modules/providers/index.js';
+// upstreamsService: used to record a session's upstream binding on send, so the
+// choice survives with the same timing as the model and effort selections.
+import { upstreamsService } from '@/modules/upstreams/index.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients, WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
 import {
@@ -251,6 +254,25 @@ async function dispatchRun(
   }
   if (typeof clientOptions.effort === 'string' && clientOptions.effort.trim()) {
     providerModelsService.setSessionEffort(provider, sessionId, clientOptions.effort);
+  }
+  // Same write timing as the model and effort above. `null` is a real value —
+  // it means "follow the default upstream" — so it is applied rather than
+  // skipped; only an omitted field leaves the stored binding alone.
+  //
+  // A stale client naming a deleted upstream must not block the turn: the
+  // binding is left as it was and the run proceeds against whatever it resolves
+  // to, which is the same degradation the resolver itself performs.
+  const requestedUpstreamId = clientOptions.upstreamId === null
+    ? null
+    : typeof clientOptions.upstreamId === 'string' && clientOptions.upstreamId.trim()
+      ? clientOptions.upstreamId.trim()
+      : undefined;
+  if (requestedUpstreamId !== undefined) {
+    try {
+      upstreamsService.setSessionUpstream(provider, sessionId, requestedUpstreamId);
+    } catch (error) {
+      console.warn('[chat.send] Ignoring unknown upstream binding:', error);
+    }
   }
 
   const attachmentCandidates = [

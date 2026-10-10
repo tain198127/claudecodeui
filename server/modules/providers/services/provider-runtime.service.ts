@@ -1,6 +1,9 @@
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
 import { providerModelsService } from '@/modules/providers/services/provider-models.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
+// upstreamResolver: used to turn the session's upstream binding into the
+// environment overrides the runtime hands the CLI.
+import { upstreamResolver } from '@/modules/upstreams/index.js';
 import type { IProvider } from '@/shared/interfaces.js';
 import type {
   AnyRecord,
@@ -44,6 +47,32 @@ export function createProviderRuntimeService(
 ) {
   const dependencies = { ...defaultDependencies, ...dependencyOverrides };
 
+  /**
+   * Builds the environment overlay for a run pointed at a configured upstream.
+   *
+   * Returns null when there is no upstream, and also when the stored token
+   * cannot be decrypted: overriding the base URL without a usable credential
+   * would break a run that currently works, so an unreadable token degrades to
+   * the untouched host environment.
+   *
+   * Explicit fields are applied after `extraEnv` so a stray key in the extra
+   * variables cannot redirect the endpoint or the credential.
+   */
+  const resolveUpstreamEnv = async (
+    sessionId: string | null | undefined,
+  ): Promise<Record<string, string> | null> => {
+    const resolved = upstreamResolver.resolveForSession(sessionId);
+    if (!resolved?.authToken) {
+      return null;
+    }
+
+    return {
+      ...resolved.upstream.extraEnv,
+      ANTHROPIC_BASE_URL: resolved.upstream.baseUrl,
+      ANTHROPIC_AUTH_TOKEN: resolved.authToken,
+    };
+  };
+
   const createRuntimeContext = (
     provider: IProvider,
   ): ProviderRuntimeContext => ({
@@ -51,6 +80,7 @@ export function createProviderRuntimeService(
     resolveResumeModel: (sessionId, requestedModel) =>
       dependencies.resolveResumeModel(provider.id, sessionId, requestedModel),
     getProviderModels: async () => dependencies.getProviderModels(provider.id),
+    resolveUpstreamEnv,
     normalizeMessage: (raw, sessionId) => provider.sessions.normalizeMessage(raw, sessionId),
     async isProviderInstalled() {
       try {

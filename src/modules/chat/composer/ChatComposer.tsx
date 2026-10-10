@@ -14,7 +14,7 @@ import { PaperclipIcon, MessageSquareIcon, XIcon, Loader2, ArrowUpIcon, PencilIc
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
-import type { QueuedDraft, ScheduledMessage, SlashCommand,SessionActivity,PendingPermissionRequest,PermissionMode,ProviderModelOption } from '@/shared/types';
+import type { QueuedDraft, ScheduledMessage, SlashCommand,SessionActivity,PendingPermissionRequest,PermissionMode,ProviderModelOption,Upstream } from '@/shared/types';
 import {
   PromptInput,
   PromptInputHeader,
@@ -35,6 +35,7 @@ import QueuedMessageCard from '@/modules/chat/composer/QueuedMessageCard';
 import { ScheduleMessagePopover } from '@/modules/chat/composer/ScheduleMessagePopover';
 import { ScheduledMessageList } from '@/modules/chat/composer/ScheduledMessageList';
 import ComposerModelMenu from '@/modules/chat/composer/ComposerModelMenu';
+import ComposerUpstreamMenu from '@/modules/chat/composer/ComposerUpstreamMenu';
 import ComposerPermissionMenu from '@/modules/chat/composer/ComposerPermissionMenu';
 
 type MentionableFile = {
@@ -63,6 +64,10 @@ type ChatComposerProps = {
   availableModelOptions: ProviderModelOption[];
   onSelectModel: (model: string) => void;
   modelsLoading: boolean;
+  /** Configured Anthropic-compatible endpoints; empty hides the selector. */
+  upstreams: Upstream[];
+  upstreamId: string | null;
+  onSelectUpstream: (upstreamId: string | null) => void;
   tokenBudget: Record<string, unknown> | null;
   onShowTokenUsage: () => void;
   slashCommandsCount: number;
@@ -138,6 +143,9 @@ export default function ChatComposer({
   availableModelOptions,
   onSelectModel,
   modelsLoading,
+  upstreams,
+  upstreamId,
+  onSelectUpstream,
   tokenBudget,
   onShowTokenUsage,
   slashCommandsCount,
@@ -476,6 +484,12 @@ export default function ChatComposer({
             <ScheduleMessagePopover
               disabled={!input.trim()}
               onSchedule={onScheduleMessage}
+            />
+
+            <ComposerUpstreamMenu
+              upstreams={upstreams}
+              upstreamId={upstreamId}
+              onSelectUpstream={onSelectUpstream}
             />
 
             <ComposerModelMenu

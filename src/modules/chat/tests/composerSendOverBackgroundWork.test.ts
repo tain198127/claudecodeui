@@ -45,6 +45,7 @@ const submit = async (processingSessions: SessionActivityMap) => {
       resolvePermissionModeForProvider: () => 'default' as PermissionMode,
       currentProviderModel: 'test-model',
       currentProviderEffort: 'medium',
+      currentProviderUpstreamId: null,
       isLoading: false,
       processingSessions,
       canAbortSession: false,

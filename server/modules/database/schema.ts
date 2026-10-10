@@ -236,6 +236,34 @@ CREATE TABLE IF NOT EXISTS session_drafts (
  * and the indexer would otherwise rediscover it on its next full scan and hand
  * the session back to the version the user edited away from.
  */
+/**
+ * Named endpoints that speak the Anthropic protocol.
+ *
+ * The Claude runtime normally inherits its endpoint from the host environment
+ * (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`, ultimately `~/.claude/settings.json`).
+ * A row here names one such endpoint so it can be selected in the UI and bound
+ * to individual sessions instead. An empty table is the supported unconfigured
+ * state: with nothing to resolve, the runtime is left exactly as it was.
+ *
+ * `auth_token_enc` holds AES-256-GCM ciphertext and never leaves the server —
+ * routes expose `hasToken` instead. `models_json` carries that endpoint's model
+ * catalog, and `extra_env_json` any additional environment variables the CLI
+ * needs for it.
+ */
+export const UPSTREAMS_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS upstreams (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    auth_token_enc TEXT NOT NULL,
+    models_json TEXT NOT NULL DEFAULT '[]',
+    extra_env_json TEXT NOT NULL DEFAULT '{}',
+    is_default INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+`;
+
 export const SUPERSEDED_PROVIDER_SESSIONS_TABLE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS superseded_provider_sessions (
     provider_session_id TEXT NOT NULL,
@@ -303,4 +331,6 @@ ${USER_PREFERENCES_TABLE_SCHEMA_SQL}
 ${SESSION_DRAFTS_TABLE_SCHEMA_SQL}
 
 ${SUPERSEDED_PROVIDER_SESSIONS_TABLE_SCHEMA_SQL}
+
+${UPSTREAMS_TABLE_SCHEMA_SQL}
 `;

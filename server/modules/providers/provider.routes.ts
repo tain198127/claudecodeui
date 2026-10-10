@@ -8,6 +8,9 @@ import { providerTokenUsageService } from '@/modules/providers/services/provider
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
+// upstreamsService: used by the session-upstream routes to read and write the
+// endpoint binding, which is owned by the Upstreams module.
+import { upstreamsService } from '@/modules/upstreams/index.js';
 import type {
   CustomProviderModelInput,
   LLMProvider,
@@ -628,6 +631,63 @@ router.post(
     // before the session gateway created its row.
     res.json(createApiSuccessResponse(
       stored ?? { provider, sessionId, effort, source: 'session' as const },
+    ));
+  }),
+);
+
+/**
+ * Reads the upstream binding payload: `null` follows the default, an id pins
+ * the session. Anything else is a client bug rather than a value to coerce.
+ */
+const parseSessionUpstreamPayload = (body: unknown): string | null => {
+  const raw = (body ?? {}) as { upstreamId?: unknown };
+  if (raw.upstreamId === null) {
+    return null;
+  }
+
+  if (typeof raw.upstreamId === 'string' && raw.upstreamId.trim()) {
+    return raw.upstreamId.trim();
+  }
+
+  throw new AppError('upstreamId must be a non-empty string or null.', {
+    code: 'INVALID_UPSTREAM_ID',
+    statusCode: 400,
+  });
+};
+
+/**
+ * Which upstream one session chats through. `upstreamId: null` means the session
+ * follows the install default, and is what a session that predates the feature
+ * reports.
+ */
+router.get(
+  '/:provider/sessions/:sessionId/upstream',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const sessionId = parseSessionId(req.params.sessionId);
+    const binding = upstreamsService.getSessionUpstream(provider, sessionId);
+    if (!binding) {
+      throw new AppError('Session not found.', {
+        code: 'SESSION_NOT_FOUND',
+        statusCode: 404,
+      });
+    }
+
+    res.json(createApiSuccessResponse(binding));
+  }),
+);
+
+router.put(
+  '/:provider/sessions/:sessionId/upstream',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const sessionId = parseSessionId(req.params.sessionId);
+    const upstreamId = parseSessionUpstreamPayload(req.body);
+    const binding = upstreamsService.setSessionUpstream(provider, sessionId, upstreamId);
+    // The session row is only allocated once the gateway has created it, so a
+    // selection made before the first send echoes back without being stored.
+    res.json(createApiSuccessResponse(
+      binding ?? { provider, sessionId, upstreamId },
     ));
   }),
 );

@@ -278,6 +278,42 @@ function mapCliOptionsToSDK(options = {}) {
 
   sdkOptions.model = options.model || CLAUDE_PREDEFINED_MODELS.DEFAULT;
 
+  // A configured upstream replaces the endpoint wholesale. Measured precedence
+  // on the CLI is `--settings` > user settings.json > process environment, so
+  // the overlay has to go through `settings.env`: written only into `env` it is
+  // overridden by whatever `~/.claude/settings.json` carries, and the session
+  // silently talks to the host's endpoint instead of the selected one.
+  //
+  // That precedence is a *per-key* merge, which is what makes the two pins below
+  // necessary rather than optional. Any ANTHROPIC_* key left unset survives from
+  // the host settings and points the CLI at a model the new endpoint has never
+  // heard of — ANTHROPIC_MODEL for the conversation, and the haiku alias for the
+  // background work (title generation, compaction) that runs on that tier.
+  //
+  // `env` is still written as well, so a CLI spawning its own children hands
+  // them the endpoint it was given.
+  //
+  // This block must stay after `sdkOptions.model` is assigned (both pins read
+  // it) and before `applyClaudeEffort` (which spreads `settings`).
+  //
+  // With no upstream resolved this block is skipped entirely and `env` stays
+  // byte-for-byte the environment-plus-ceiling object built above.
+  if (options.upstreamEnv) {
+    const upstreamEnv = {
+      ...options.upstreamEnv,
+      ANTHROPIC_MODEL: sdkOptions.model,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL:
+        options.upstreamEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL || sdkOptions.model,
+    };
+
+    Object.assign(sdkOptions.env, upstreamEnv);
+
+    sdkOptions.settings = {
+      ...(sdkOptions.settings || {}),
+      env: { ...(sdkOptions.settings?.env || {}), ...upstreamEnv },
+    };
+  }
+
   applyClaudeEffort(sdkOptions, resolveClaudeEffort(
     sdkOptions.model,
     effort,
@@ -940,11 +976,24 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
       console.warn('[Claude SDK] Unable to load provider models for effort validation:', error);
     }
 
+    // Which endpoint this run talks to. Resolved here rather than inside
+    // `mapCliOptionsToSDK` because it needs the session binding, and kept out of
+    // the runtime adapter entirely so this file never imports the database.
+    // A failure to resolve must not fail the turn: the run then keeps the host
+    // environment, which is what every install without upstreams uses.
+    let upstreamEnv = null;
+    try {
+      upstreamEnv = await context.resolveUpstreamEnv?.(sessionId);
+    } catch (error) {
+      console.warn('[Claude SDK] Unable to resolve the configured upstream:', error);
+    }
+
     const sdkOptions = mapCliOptionsToSDK({
       ...options,
       providerSessionId,
       model: resolvedModel || options.model,
       effortModels,
+      upstreamEnv,
     });
 
     const mcpServers = await loadMcpConfig(options.cwd);
@@ -1480,5 +1529,6 @@ export {
   getPendingApprovalsForSession,
   reconnectSessionWriter,
   extractTokenBudget,
-  extractCumulativeTokenBudget
+  extractCumulativeTokenBudget,
+  mapCliOptionsToSDK
 };

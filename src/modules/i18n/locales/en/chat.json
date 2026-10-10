@@ -144,6 +144,10 @@
     "effortDefault": "Default",
     "loadingModels": "Loading models…",
     "modelMenu": "Select model and reasoning effort",
+    "upstreamMenu": "Select upstream endpoint",
+    "upstream": "Upstream endpoint",
+    "upstreamDefault": "Default endpoint",
+    "upstreamDefaultOption": "Follow the default",
     "permissionHeading": "How should {{provider}} actions be approved?",
     "editing": {
       "title": "Replacing an earlier message",

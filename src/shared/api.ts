@@ -432,6 +432,27 @@ export const api = {
       post(`/api/providers/${provider}/skills`, payload),
   },
 
+  // Named Anthropic-compatible endpoints. The token is write-only: it goes out
+  // in these bodies and never comes back in a response.
+  upstreams: {
+    list: () => get('/api/upstreams'),
+    create: (payload: unknown) => post('/api/upstreams', payload),
+    update: (upstreamId: string, payload: unknown) =>
+      patch(`/api/upstreams/${encodeURIComponent(upstreamId)}`, payload),
+    remove: (upstreamId: string) => del(`/api/upstreams/${encodeURIComponent(upstreamId)}`),
+    setDefault: (upstreamId: string) =>
+      post(`/api/upstreams/${encodeURIComponent(upstreamId)}/default`),
+    test: (upstreamId: string) =>
+      post(`/api/upstreams/${encodeURIComponent(upstreamId)}/test`),
+    getSessionUpstream: (provider: string, sessionId: string) =>
+      get(`/api/providers/${encodeURIComponent(provider)}/sessions/${encodeURIComponent(sessionId)}/upstream`),
+    setSessionUpstream: (provider: string, sessionId: string, upstreamId: string | null) =>
+      put(
+        `/api/providers/${encodeURIComponent(provider)}/sessions/${encodeURIComponent(sessionId)}/upstream`,
+        { upstreamId },
+      ),
+  },
+
   // Slash commands
   commands: {
     // `projectPath` stays optional: a workspace without a resolved path omits

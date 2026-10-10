@@ -1,11 +1,15 @@
 import { readFile } from 'node:fs/promises';
 
 import { sessionsDb } from '@/modules/database/index.js';
+// upstreamResolver: used to serve a configured upstream's own model catalog
+// instead of the built-in Claude list.
+import { upstreamResolver } from '@/modules/upstreams/index.js';
 import type { IProviderModels } from '@/shared/interfaces.js';
 import type {
   ProviderCurrentActiveModel,
   ProviderModelOption,
   ProviderModelsDefinition,
+  UpstreamModel,
 } from '@/shared/types.js';
 import { buildDefaultProviderCurrentActiveModel, stripAnsiSequences } from '@/shared/utils.js';
 
@@ -159,6 +163,27 @@ export const CLAUDE_PREDEFINED_MODELS: ProviderModelsDefinition = {
   DEFAULT: 'default',
 };
 
+/**
+ * Builds the catalog an upstream serves from its own model list.
+ *
+ * The upstream's catalog has no default marker — it is just the models the
+ * endpoint accepts — so the first entry is the default, which is why the
+ * settings form keeps the rows in the order the user entered them.
+ *
+ * Effort metadata is deliberately absent: reasoning-effort levels are a Claude
+ * Code concept, and there is no way to know whether a third-party endpoint
+ * honours them for a given model. Models without effort metadata already render
+ * as a plain picker, the same way the built-in `haiku` entry does.
+ */
+const buildUpstreamModelsDefinition = (models: UpstreamModel[]): ProviderModelsDefinition => ({
+  OPTIONS: models.map((model) => ({
+    value: model.id,
+    label: model.label,
+    ...(model.description ? { description: model.description } : {}),
+  })),
+  DEFAULT: models[0].id,
+});
+
 export const findClaudeModelOption = (model: string | undefined | null): ProviderModelOption | null => {
   const normalizedModel = typeof model === 'string' ? model.trim() : '';
   if (!normalizedModel) {
@@ -292,6 +317,17 @@ export class ClaudeProviderModels implements IProviderModels {
     // const supportedModels = await queryInstance.supportedModels();
     // queryInstance.close();
     // return buildClaudeModelsDefinition(supportedModels);
+    //
+    // A configured upstream serves its own models, so the built-in catalog would
+    // offer names it has never heard of. This is the catalog for a run with no
+    // session attached; an upstream with no models of its own keeps the built-in
+    // list rather than leaving the picker empty.
+    const resolved = upstreamResolver.resolveDefault();
+    const upstreamModels = resolved?.upstream.models ?? [];
+    if (upstreamModels.length > 0) {
+      return buildUpstreamModelsDefinition(upstreamModels);
+    }
+
     return CLAUDE_PREDEFINED_MODELS;
   }
 

@@ -238,6 +238,10 @@
     "forkFromHere": "从此处派生"
   },
   "composer": {
+    "upstreamMenu": "选择上游端点",
+    "upstream": "上游端点",
+    "upstreamDefault": "默认端点",
+    "upstreamDefaultOption": "跟随默认",
     "editing": {
       "title": "正在替换先前的消息",
       "filesNotReverted": "已修改的文件不会被还原",

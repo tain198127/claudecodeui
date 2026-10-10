@@ -600,6 +600,15 @@ export type ProviderRuntimeContext = {
   normalizeMessage(raw: unknown, sessionId: string | null): NormalizedMessage[];
   isProviderInstalled(): Promise<boolean>;
   /**
+   * Environment overrides that point a run at a configured upstream endpoint,
+   * or null when the session should keep the host environment as-is.
+   *
+   * Unset is the supported default and means the same as null, so a runtime that
+   * never sees one — every caller before upstreams existed, and every test double
+   * that does not care about them — behaves exactly as it did before.
+   */
+  resolveUpstreamEnv?(sessionId: string | null | undefined): Promise<Record<string, string> | null>;
+  /**
    * Builds the SDK query for a run. Production leaves this unset and the
    * runtime uses the SDK's own; tests supply a scripted stream so the hold
    * and background-work paths can be driven without a CLI process.
@@ -844,6 +853,13 @@ export type ProviderAuthStatus = {
   authenticated: boolean;
   email: string | null;
   method: string | null;
+  /**
+   * Which credential store produced this answer. `upstream` means a configured
+   * endpoint supplied the URL and token rather than a Claude login or an
+   * environment variable. Optional: a provider that does not distinguish its
+   * sources leaves it unset, and existing consumers ignore it.
+   */
+  credentialSource?: string;
   error?: string;
 };
 
@@ -1535,4 +1551,123 @@ export type CliApplication = {
  */
 export type SandboxCommandService = {
   execute(argumentsList: string[]): Promise<number>;
+};
+
+// ---------------------------
+//----------------- UPSTREAM TYPES ------------
+/**
+ * One entry of an upstream's model catalog.
+ *
+ * `id` is the value handed to the provider CLI as the model name, so it must
+ * survive a round trip through `ANTHROPIC_MODEL` unchanged: no surrounding
+ * whitespace, no internal whitespace.
+ */
+export type UpstreamModel = {
+  id: string;
+  label: string;
+  /** Optional free-text hint shown next to the model in the picker. */
+  description?: string;
+};
+
+/**
+ * One stored Anthropic-compatible endpoint as the repository holds it.
+ *
+ * This is the internal shape: `authTokenEnc` is AES-256-GCM ciphertext and must
+ * never be serialized to a client. Routes map it to `UpstreamView` first.
+ */
+export type UpstreamRecord = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  authTokenEnc: string;
+  models: UpstreamModel[];
+  extraEnv: Record<string, string>;
+  isDefault: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+/**
+ * Validated input for creating an upstream.
+ *
+ * `authTokenEnc` is already encrypted when it reaches the repository, so the
+ * persistence layer never handles a plaintext secret.
+ */
+export type UpstreamCreateInput = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  authTokenEnc: string;
+  models: UpstreamModel[];
+  extraEnv: Record<string, string>;
+  isDefault: boolean;
+};
+
+/**
+ * Validated patch for an existing upstream.
+ *
+ * Every field is optional and an omitted field is left untouched. `authTokenEnc`
+ * is absent — not empty — when the caller wants to keep the stored secret, which
+ * is how the settings form distinguishes "left blank" from "clear it".
+ */
+export type UpstreamUpdateInput = {
+  name?: string;
+  baseUrl?: string;
+  authTokenEnc?: string;
+  models?: UpstreamModel[];
+  extraEnv?: Record<string, string>;
+};
+
+/**
+ * The upstream shape every API response carries.
+ *
+ * `hasToken` replaces the ciphertext so a client can tell a configured endpoint
+ * from one still waiting for its secret without ever receiving the secret or a
+ * value derived from it.
+ */
+export type UpstreamView = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  models: UpstreamModel[];
+  extraEnv: Record<string, string>;
+  isDefault: boolean;
+  hasToken: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+/**
+ * An upstream plus its decrypted token, as the runtime needs it.
+ *
+ * `authToken` is null when the stored ciphertext cannot be decrypted (a rotated
+ * or corrupted `jwt_secret`), which callers must treat as "not configured"
+ * rather than as an empty credential.
+ */
+export type ResolvedUpstream = {
+  upstream: UpstreamRecord;
+  authToken: string | null;
+};
+
+/** Outcome of probing an upstream's `/v1/models` endpoint. Never carries the token. */
+export type UpstreamConnectionTestResult = {
+  ok: boolean;
+  /** HTTP status of the probe, absent when the request never completed. */
+  status?: number;
+  /** Model ids the endpoint reported, present only on a successful probe. */
+  modelIds?: string[];
+  /** Human-readable failure reason, absent on success. */
+  error?: string;
+};
+
+/**
+ * The upstream one session runs against, or null when the session does not exist.
+ *
+ * `upstreamId` null is the meaningful "follow the default" state, which is why
+ * it is distinguishable from the session being absent.
+ */
+export type SessionUpstreamBinding = {
+  provider: string;
+  sessionId: string;
+  upstreamId: string | null;
 };
